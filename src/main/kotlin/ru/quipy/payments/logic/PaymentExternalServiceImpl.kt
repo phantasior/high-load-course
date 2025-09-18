@@ -97,7 +97,6 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
         }
-        rateLimiter.tick()
     }
 
     override fun price() = properties.price
