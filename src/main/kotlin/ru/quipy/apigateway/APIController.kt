@@ -17,15 +17,17 @@ class APIController {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
+    val retryAfterDuration: Int = 750
+
     @Autowired
     private lateinit var orderRepository: OrderRepository
 
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    private var tokenBucket = TokenBucketRateLimiter(
-        rate = 11, 
-        bucketMaxCapacity = 150,
+    private var rateLimiter = TokenBucketRateLimiter(
+        rate = 11,  // rps
+        bucketMaxCapacity = 11 * 26 - 2, //~ maxExecTime * rps
         window = 1, 
         timeUnit = TimeUnit.SECONDS
     )
@@ -67,25 +69,37 @@ class APIController {
 
     @PostMapping("/orders/{orderId}/payment")
     fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
-        if (!tokenBucket.tick()) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "2".toString())
-                .build()
-        }
-
+        
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
             it
         } ?: throw IllegalArgumentException("No such order $orderId")
+        
+        if (!rateLimiter.tick()) {
+            logger.warn("Either rate limiter or order payer failed")
+            return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", (System.currentTimeMillis() + retryAfterDuration).toString())
+                .build()
+        }
 
+        // if (!orderPayer.canAcceptRequest()) {
+        //     logger.warn("Order payer can't receive any more requests")
+        //     return ResponseEntity
+        //         .status(HttpStatus.TOO_MANY_REQUESTS)
+        //         .header("Retry-After", retryAfterDuration)
+        //         .build()
+        // }
 
         try {
             val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
             return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
-        } catch (e: RuntimeException) {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", "1".toString())
+        } catch (e: Exception) {
+            logger.warn("Abort policy - thread pull is full")
+            return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", (System.currentTimeMillis() + retryAfterDuration).toString())
                 .build()
         }
     }
