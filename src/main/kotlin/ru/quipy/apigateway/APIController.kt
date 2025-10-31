@@ -27,7 +27,7 @@ class APIController {
 
     private var rateLimiter = TokenBucketRateLimiter(
         rate = 11,  // rps
-        bucketMaxCapacity = 11 * 26 - 2, //~ maxExecTime * rps
+        bucketMaxCapacity = 11 * 26,
         window = 1, 
         timeUnit = TimeUnit.SECONDS
     )

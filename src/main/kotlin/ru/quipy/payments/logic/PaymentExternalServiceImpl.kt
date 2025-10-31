@@ -56,7 +56,7 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        slidingWindow.tickBlocking() // we have to ensure that execution thread pool has `good` size
+        slidingWindow.tickBlocking()
 
         try {
             val request = Request.Builder().run {

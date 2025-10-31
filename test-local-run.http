@@ -10,6 +10,31 @@ Content-Type: application/json
   "processingTimeMillis": 2500
 }
 
+# 5.1
+curl http://localhost:1234/test/run \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{
+        "serviceName": "darkside",
+        "token": "secret",
+        "ratePerSecond": 15,
+        "testCount": 3000,
+        "processingTimeMillis": 2500
+    }'
+
+# 5.3
+curl http://localhost:1234/test/run \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{
+        "serviceName": "darkside",
+        "token": "secret",
+        "ratePerSecond": 3,
+        "testCount": 1050,
+        "processingTimeMillis": 26000,
+        "runits": 90
+    }'
+
 ### Stop running test to save time and resources
 # @timeout 120
 POST http://localhost:1234/test/stop/darkside
