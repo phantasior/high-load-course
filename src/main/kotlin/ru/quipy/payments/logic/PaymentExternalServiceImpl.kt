@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.OngoingWindow
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
@@ -38,6 +39,7 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val slidingWindow = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
+    private val ongoingWindow = OngoingWindow(parallelRequests)
 
     private val client = OkHttpClient.Builder().build()
 
@@ -56,13 +58,40 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        slidingWindow.tickBlocking()
-
         try {
+            ongoingWindow.acquire()
+
             val request = Request.Builder().run {
                 url("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
                 post(emptyBody)
             }.build()
+
+            trySendRequest(request, paymentId, transactionId)
+        } catch (e: Exception) {
+            when (e) {
+                is SocketTimeoutException -> {
+                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                    }
+                }
+
+                else -> {
+                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(false, now(), transactionId, reason = e.message)
+                    }
+                }
+            }
+        } finally {
+            ongoingWindow.release()
+        }
+    }
+
+    private fun trySendRequest(request: Request, paymentId: UUID, transactionId: UUID) {
+        repeat(3) {
+            slidingWindow.tickBlocking()
 
             client.newCall(request).execute().use { response ->
                 val body = try {
@@ -79,22 +108,11 @@ class PaymentExternalSystemAdapterImpl(
                 paymentESService.update(paymentId) {
                     it.logProcessing(body.result, now(), transactionId, reason = body.message)
                 }
-            }
-        } catch (e: Exception) {
-            when (e) {
-                is SocketTimeoutException -> {
-                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                    }
-                }
 
-                else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
+                if (body.result) {
+                    return@trySendRequest
+                } else {
+                    Thread.sleep(750)
                 }
             }
         }

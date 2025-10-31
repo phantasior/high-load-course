@@ -17,7 +17,7 @@ class APIController {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
-    val retryAfterDuration: Int = 750
+    val retryAfterDuration: Int = 500
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
@@ -26,9 +26,9 @@ class APIController {
     private lateinit var orderPayer: OrderPayer
 
     private var rateLimiter = TokenBucketRateLimiter(
-        rate = 11,  // rps
-        bucketMaxCapacity = 11 * 26,
-        window = 1, 
+        rate = 10,  // rps
+        bucketMaxCapacity = 35, // 10  * 3.5
+        window = 1,
         timeUnit = TimeUnit.SECONDS
     )
 
