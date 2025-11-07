@@ -11,6 +11,7 @@ import java.util.*
 import java.util.concurrent.TimeUnit
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl.RetryAfterException
 
 @RestController
 class APIController {
@@ -84,18 +85,19 @@ class APIController {
                 .build()
         }
 
-        // if (!orderPayer.canAcceptRequest()) {
-        //     logger.warn("Order payer can't receive any more requests")
-        //     return ResponseEntity
-        //         .status(HttpStatus.TOO_MANY_REQUESTS)
-        //         .header("Retry-After", retryAfterDuration)
-        //         .build()
-        // }
 
         try {
             val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
             return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
         } catch (e: Exception) {
+            if (e is RetryAfterException) {
+            logger.warn("Retry after $e.interval ms payment request for order $orderId")
+                return ResponseEntity
+                    .status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header("Retry-After", (System.currentTimeMillis() + e.interval).toString())
+                    .build()
+            }
+        
             logger.warn("Abort policy - thread pull is full")
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)

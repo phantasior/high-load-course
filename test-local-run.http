@@ -17,9 +17,9 @@ curl http://localhost:1234/test/run \
     -d '{
         "serviceName": "darkside",
         "token": "...",
-          "ratePerSecond": 7,
-          "testCount": 800,
-          "processingTimeMillis": 3500
+          "ratePerSecond": 5,
+          "testCount": 1000,
+          "processingTimeMillis": 6000
     }'
 
 
