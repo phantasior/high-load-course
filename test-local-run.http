@@ -10,17 +10,44 @@ Content-Type: application/json
   "processingTimeMillis": 2500
 }
 
-# 6
 curl http://localhost:1234/test/run \
     -X POST \
     -H "Content-Type: application/json" \
     -d '{
         "serviceName": "darkside",
-        "token": "...",
-          "ratePerSecond": 5,
-          "testCount": 1000,
-          "processingTimeMillis": 6000
+        "token": "..",
+        "ratePerSecond": 100,
+        "testCount": 5000,
+        "processingTimeMillis": 20000
     }'
+
+Аккаунт: "acc-9"
+
+  {
+    "serviceName": "darkside",
+    "accountName": "acc-9",
+    "parallelRequests": 50,
+    "rateLimitPerSec": 120,
+    "price": 30,
+    "averageProcessingTime": "PT0.5S"
+  },
+
+Тест:
+{
+  "ratePerSecond": 100,
+  "testCount": 5000,
+  "processingTimeMillis": 20000
+}
+
+mvn dependency:go-offline && mvn package && java -jar target/demo-0.0.1-SNAPSHOT.jar
+
+
+export PAYMENT_SERVICE_NAME=darkside
+export PAYMENT_TOKEN=...
+export PAYMENT_ACCOUNTS=acc-9
+export PAYMENT_HOST=localhost
+export PAYMENT_PORT=1234
+
 
 
 ### Stop running test to save time and resources

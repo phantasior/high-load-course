@@ -26,12 +26,12 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
+    private val executorSize: Int = (50 / 0.5).toInt() // parallerRequests * averageProcessingTime (prs is more that this)
+
     private val paymentExecutor = ThreadPoolExecutor(
-        10,
-        10,
-        0L,
-        TimeUnit.MILLISECONDS,
-        LinkedBlockingQueue(35), // 10 * 3.5
+        executorSize, executorSize, // fixed size
+        0L, TimeUnit.MILLISECONDS, // doesn't matter because of fixed size thread pool
+        LinkedBlockingQueue(2000),
         NamedThreadFactory("payment-submission-executor"),
         ThreadPoolExecutor.AbortPolicy()
     )
