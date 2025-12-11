@@ -14,6 +14,7 @@ import java.net.SocketTimeoutException
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.net.URI
 import java.time.Duration
 import java.util.*
@@ -74,7 +75,7 @@ class PaymentExternalSystemAdapterImpl(
     //     .dispatcher(dispatcher)
     //     .build()
     private val client = HttpClient.newBuilder()
-        .executor(Executors.newFixedThreadPool(100))
+        .executor(Executors.newVirtualThreadPerTaskExecutor()) 
         .version(HttpClient.Version.HTTP_2)
         .build()
 
@@ -95,18 +96,27 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
-            withTimeout(Duration.ofSeconds(45).toMillis()) {
+            // withTimeout(Duration.ofSeconds(30).toMillis()) {
                 val request = HttpRequest.newBuilder()
-                    .uri(URI.create("http://$paymentProviderHostPort/external/process?..."))
+                    .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
                     .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
+                    .timeout(Duration.ofSeconds(35))
                     .build()
 
                 trySendRequest(request, paymentId, transactionId, deadline)
-            }
+            // }
         } catch (e: Exception) {
+            logger.error("SOME STRAGE STUFF WTF [$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, class: ${e.javaClass}", e)
             when (e) {
+
                 is TimeoutCancellationException -> {
+                    logger.warn("Calcellration expection!! return 429 :C")
                     throw e
+                }
+
+                is HttpTimeoutException -> {
+                    logger.warn("HTTP TIMEOUT EXCEPTION")
+                    throw e   
                 }
 
                 is SocketTimeoutException -> {
@@ -177,8 +187,8 @@ class PaymentExternalSystemAdapterImpl(
             // shouldRetry = false
             attemptIndex++
 
-            ongoingWindow.acquire()
-            slidingWindow.tickBlocking()
+            // ongoingWindow.acquire()
+            // slidingWindow.tickBlocking()
 
             // if (estimatedRemainingTime - now() < 0) {
             //     throw RetryAfterException(quntileResponseTime)
@@ -240,7 +250,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             } finally {
                 sample.stop(metrics.requestDurationTimer)
-                ongoingWindow.release()
+                // ongoingWindow.release()
             }
         }
 
