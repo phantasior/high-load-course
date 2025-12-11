@@ -19,6 +19,7 @@ import java.time.Duration
 import java.util.*
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeoutException
 import javax.management.RuntimeErrorException
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
@@ -95,11 +96,16 @@ class PaymentExternalSystemAdapterImpl(
             val request = HttpRequest.newBuilder()
                 .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
                 .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
+                .timeout(Duration.ofSeconds(45))
                 .build()
 
             trySendRequest(request, paymentId, transactionId, deadline)
         } catch (e: Exception) {
             when (e) {
+                is TimeoutException -> {
+                    throw e
+                }
+
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                     paymentESService.update(paymentId) {

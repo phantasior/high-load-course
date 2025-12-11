@@ -18,7 +18,7 @@ class APIController {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
-    val retryAfterDuration: Int = 3000
+    val retryAfterDuration: Int = 10_000
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
