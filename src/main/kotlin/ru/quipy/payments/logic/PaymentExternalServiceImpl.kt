@@ -29,6 +29,8 @@ import kotlinx.coroutines.CancellationException
 import kotlin.coroutines.resume
 import kotlinx.coroutines.future.await
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 
 
 // Advice: always treat time as a Duration
@@ -93,16 +95,17 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
-                .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
-                .timeout(Duration.ofSeconds(45))
-                .build()
+            withTimeout(Duration.ofSeconds(45).toMillis()) {
+                val request = HttpRequest.newBuilder()
+                    .uri(URI.create("http://$paymentProviderHostPort/external/process?..."))
+                    .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
+                    .build()
 
-            trySendRequest(request, paymentId, transactionId, deadline)
+                trySendRequest(request, paymentId, transactionId, deadline)
+            }
         } catch (e: Exception) {
             when (e) {
-                is TimeoutException -> {
+                is TimeoutCancellationException -> {
                     throw e
                 }
 
