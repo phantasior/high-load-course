@@ -168,8 +168,8 @@ class PaymentExternalSystemAdapterImpl(
             // shouldRetry = false
             attemptIndex++
 
-            // ongoingWindow.acquire()
-            // slidingWindow.tickBlocking()
+            ongoingWindow.acquire()
+            slidingWindow.tickBlocking()
 
             // if (estimatedRemainingTime - now() < 0) {
             //     throw RetryAfterException(quntileResponseTime)
@@ -184,7 +184,6 @@ class PaymentExternalSystemAdapterImpl(
 
                 var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
                 // client.newCall(request).await().use { response ->
-                    // 🔑 Read body ONCE
                 val responseBodyString = response.body()
 
                 val body = try {
@@ -232,7 +231,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             } finally {
                 sample.stop(metrics.requestDurationTimer)
-                // ongoingWindow.release()
+                ongoingWindow.release()
             }
         }
 
