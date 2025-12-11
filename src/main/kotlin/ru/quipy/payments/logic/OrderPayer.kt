@@ -12,6 +12,9 @@ import java.util.*
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 
 @Service
 class OrderPayer {
@@ -29,12 +32,16 @@ class OrderPayer {
     private val executorSize: Int = (50 / 0.5).toInt() // parallerRequests * averageProcessingTime (prs is more that this)
 
     private val paymentExecutor = ThreadPoolExecutor(
-        executorSize, executorSize, // fixed size
-        0L, TimeUnit.MILLISECONDS, // doesn't matter because of fixed size thread pool
-        LinkedBlockingQueue(2000),
+        100,
+        1200,
+        70L,
+        TimeUnit.SECONDS,
+        LinkedBlockingQueue(11_000),
         NamedThreadFactory("payment-submission-executor"),
-        ThreadPoolExecutor.AbortPolicy()
+        CallerBlockingRejectedExecutionHandler()
     )
+
+    val executorScope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
     fun canAcceptRequest(): Boolean {
         return (paymentExecutor.activeCount < paymentExecutor.maximumPoolSize) || 
@@ -44,18 +51,18 @@ class OrderPayer {
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-        // paymentExecutor.submit {
-        val createdEvent = paymentESService.create {
-            it.create(
-                paymentId,
-                orderId,
-                amount
-            )
-        }
-        logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+        executorScope.launch {
+            val createdEvent = paymentESService.create {
+                it.create(
+                    paymentId,
+                    orderId,
+                    amount
+                )
+            }
+            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
 
-        paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
-        // }
+            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+        }
 
         return createdAt
     }

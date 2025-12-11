@@ -74,8 +74,13 @@ class PaymentExternalSystemAdapterImpl(
     //     .callTimeout(45, TimeUnit.SECONDS)
     //     .dispatcher(dispatcher)
     //     .build()
+    // private val client = HttpClient.newBuilder()
+    //     .executor(Executors.newVirtualThreadPerTaskExecutor()) 
+    //     .version(HttpClient.Version.HTTP_2)
+    //     .build()
+
     private val client = HttpClient.newBuilder()
-        .executor(Executors.newVirtualThreadPerTaskExecutor()) 
+        .executor(Executors.newFixedThreadPool(100))
         .version(HttpClient.Version.HTTP_2)
         .build()
 
@@ -201,7 +206,7 @@ class PaymentExternalSystemAdapterImpl(
             // val callTimeout = remainingTime.coerceAtLeast(1L)
             try {
 
-                var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply { response ->
                 // client.newCall(request).await().use { response ->
                 val responseBodyString = response.body()
 
@@ -219,6 +224,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
 
                 metrics.retriesPerRequestSummary.record((attemptIndex).toDouble())
+            }
                 // }
                 // val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
                 // call.timeout().timeout(10_000, TimeUnit.MILLISECONDS)
