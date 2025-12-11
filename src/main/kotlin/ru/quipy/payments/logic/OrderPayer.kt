@@ -41,21 +41,21 @@ class OrderPayer {
             (paymentExecutor.queue.remainingCapacity() > 0)
     }
 
-    fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
+    suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-        paymentExecutor.submit {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
-            }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
-
-            paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+        // paymentExecutor.submit {
+        val createdEvent = paymentESService.create {
+            it.create(
+                paymentId,
+                orderId,
+                amount
+            )
         }
+        logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
+
+        paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
+        // }
 
         return createdAt
     }

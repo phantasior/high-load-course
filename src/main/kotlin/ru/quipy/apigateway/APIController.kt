@@ -18,7 +18,7 @@ class APIController {
 
     val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
-    val retryAfterDuration: Int = 1000
+    val retryAfterDuration: Int = 3000
 
     @Autowired
     private lateinit var orderRepository: OrderRepository
@@ -26,12 +26,12 @@ class APIController {
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    private val accountRps: Int = 120
+    // private val accountRps: Int = 120
 
     private var rateLimiter = TokenBucketRateLimiter(
-        rate = accountRps,
-        bucketMaxCapacity = accountRps,
-        window = 1,
+        rate = 1100,
+        bucketMaxCapacity = 20000,
+        window = 1,     
         timeUnit = TimeUnit.SECONDS
     )
 
@@ -71,7 +71,7 @@ class APIController {
     }
 
     @PostMapping("/orders/{orderId}/payment")
-    fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
+    suspend fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): ResponseEntity<PaymentSubmissionDto> {
         
         val paymentId = UUID.randomUUID()
         val order = orderRepository.findById(orderId)?.let {
