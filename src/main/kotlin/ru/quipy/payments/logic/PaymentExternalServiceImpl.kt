@@ -105,7 +105,7 @@ class PaymentExternalSystemAdapterImpl(
                 val request = HttpRequest.newBuilder()
                     .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
                     .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
-                    .timeout(Duration.ofSeconds(35))
+                    .timeout(Duration.ofSeconds(20))
                     .build()
 
                 trySendRequest(request, paymentId, transactionId, deadline)
@@ -192,8 +192,8 @@ class PaymentExternalSystemAdapterImpl(
             // shouldRetry = false
             attemptIndex++
 
-            // ongoingWindow.acquire()
-            // slidingWindow.tickBlocking()
+            ongoingWindow.acquire()
+            slidingWindow.tickBlocking()
 
             // if (estimatedRemainingTime - now() < 0) {
             //     throw RetryAfterException(quntileResponseTime)
@@ -256,7 +256,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             } finally {
                 sample.stop(metrics.requestDurationTimer)
-                // ongoingWindow.release()
+                ongoingWindow.release()
             }
         }
 
