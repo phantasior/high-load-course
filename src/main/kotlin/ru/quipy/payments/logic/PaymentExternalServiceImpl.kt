@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import okhttp3.*
 import org.slf4j.LoggerFactory
+import org.eclipse.jetty.websocket.api.StatusCode
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.common.utils.SlidingWindowRateLimiter
@@ -60,11 +61,6 @@ class PaymentExternalSystemAdapterImpl(
 
     private val slidingWindow = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val ongoingWindow = OngoingWindow(parallelRequests)
-
-    val dispatcher = Dispatcher().apply {
-        maxRequests = 200_000
-        maxRequestsPerHost = 200_000
-    }
 
     private val client = HttpClient.newBuilder()
         .executor(Executors.newFixedThreadPool(100))
@@ -130,8 +126,8 @@ class PaymentExternalSystemAdapterImpl(
         val estimatedRemainingTime = deadline - quntileResponseTime
         
         var attemptIndex = 0
-        val maxAttempts = 1
-        val baseDelayMs = 100L
+        val maxAttempts = 3
+        val baseDelayMs = 100L 
         val maxDelayMs = 5000L
 
         var shouldRetry = true
@@ -164,31 +160,29 @@ class PaymentExternalSystemAdapterImpl(
             metrics.retryCounter.increment()
 
             val sample = Timer.start(meterRegistry)
-            val remainingTime = (deadline - now()).toLong()
-            val callTimeout = remainingTime.coerceAtLeast(1L)
             try {
-                client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply { response ->
-                    val responseBodyString = response.body()
+                var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                val success = response.statusCode() in 200..299
+                val body = try {
+                    mapper.readValue(response.body(), ExternalSysResponse::class.java)
+                } catch (e: Exception) {
+                    logger.error("[$accountName] [ERROR] txId=$transactionId payment=$paymentId code=${response.statusCode()} reason=${response.body()}")
+                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
+                }
 
-                    val body = try {
-                        mapper.readValue(responseBodyString, ExternalSysResponse::class.java)
-                    } catch (e: Exception) {
-                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: $responseBodyString")
-                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message ?: "Parse failed")
-                    }
+                metrics.retriesPerRequestSummary.record((attemptIndex).toDouble())
 
+                if (success) {
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
                     paymentESService.update(paymentId) {
                         it.logProcessing(body.result, now(), transactionId, reason = body.message)
                     }
-
-                    metrics.retriesPerRequestSummary.record((attemptIndex).toDouble())
+                    
+                    return
                 }
             } catch (e: CancellationException) {
                 logger.warn("cancelattion exception:()")
                 throw e
-
             } catch (e: Exception) {
                 when (e) {
                     is InterruptedIOException -> {
