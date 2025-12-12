@@ -29,8 +29,6 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val executorSize: Int = (50 / 0.5).toInt() // parallerRequests * averageProcessingTime (prs is more that this)
-
     private val paymentExecutor = ThreadPoolExecutor(
         100,
         1200,

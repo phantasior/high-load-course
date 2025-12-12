@@ -66,19 +66,6 @@ class PaymentExternalSystemAdapterImpl(
         maxRequestsPerHost = 200_000
     }
 
-    // private val client = OkHttpClient
-    //     .Builder()
-    //     .connectTimeout(10, TimeUnit.SECONDS)    // TCP connection timeout
-    //     .readTimeout(30, TimeUnit.SECONDS)       // Waiting for response data
-    //     .writeTimeout(10, TimeUnit.SECONDS)      // Sending request body
-    //     .callTimeout(45, TimeUnit.SECONDS)
-    //     .dispatcher(dispatcher)
-    //     .build()
-    // private val client = HttpClient.newBuilder()
-    //     .executor(Executors.newVirtualThreadPerTaskExecutor()) 
-    //     .version(HttpClient.Version.HTTP_2)
-    //     .build()
-
     private val client = HttpClient.newBuilder()
         .executor(Executors.newFixedThreadPool(100))
         .version(HttpClient.Version.HTTP_2)
@@ -101,15 +88,13 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
-            // withTimeout(Duration.ofSeconds(30).toMillis()) {
-                val request = HttpRequest.newBuilder()
-                    .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
-                    .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
-                    .timeout(Duration.ofSeconds(20))
-                    .build()
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
+                .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
+                .timeout(Duration.ofSeconds(20))
+                .build()
 
-                trySendRequest(request, paymentId, transactionId, deadline)
-            // }
+            trySendRequest(request, paymentId, transactionId, deadline)
         } catch (e: Exception) {
             logger.error("SOME STRAGE STUFF WTF [$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, class: ${e.javaClass}", e)
             when (e) {
@@ -140,109 +125,75 @@ class PaymentExternalSystemAdapterImpl(
         }
     }
 
-    // var quntileResponseTime = 1030L // ms 0.9 quantile response time
-
-    // suspend fun Call.await(): Response {
-    //     return suspendCancellableCoroutine { continuation ->
-    //         // Ensure the HTTP call is cancelled if the coroutine is cancelled
-    //         continuation.invokeOnCancellation { cancel() }
-
-    //         enqueue(object : Callback {
-    //             override fun onFailure(call: Call, e: IOException) {
-    //                 continuation.resumeWithException(e)
-    //             }
-
-    //             override fun onResponse(call: Call, response: Response) {
-    //                 // Important: do NOT close the response here!
-    //                 // Let the caller manage it with .use { }
-    //                 continuation.resume(response)
-    //             }
-    //         })
-    //     }
-    // }
-
     suspend private fun trySendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID, deadline: Long) {
-        // val estimatedRemainingTime = deadline - quntileResponseTime
+        var quntileResponseTime = 1030L
+        val estimatedRemainingTime = deadline - quntileResponseTime
         
         var attemptIndex = 0
         val maxAttempts = 1
-        // val baseDelayMs = 100L
-        // val maxDelayMs = 5000L
+        val baseDelayMs = 100L
+        val maxDelayMs = 5000L
 
-        // var shouldRetry = true
+        var shouldRetry = true
 
         repeat(maxAttempts) {
-            // if (!shouldRetry) return@repeat
-            // if (attemptIndex > 0) {
-                // val delayMs = minOf(baseDelayMs * (1L shl (attemptIndex - 1)), maxDelayMs) // битовый сдвиг эквивалентен возведению в степень, типа экспоненциальный бэкофф
+            if (!shouldRetry) return@repeat
+            if (attemptIndex > 0) {
+                val delayMs = minOf(baseDelayMs * (1L shl (attemptIndex - 1)), maxDelayMs) // битовый сдвиг эквивалентен возведению в степень, типа экспоненциальный бэкофф
 
-                // if (estimatedRemainingTime - now() < delayMs) {
-                //     throw RetryAfterException(quntileResponseTime)
-                // }
+                if (estimatedRemainingTime - now() < delayMs) {
+                    throw RetryAfterException(quntileResponseTime)
+                }
 
-                // try {
-                //     Thread.sleep(delayMs)
-                // } catch (e: InterruptedException) {
-                //     Thread.currentThread().interrupt()
-                //     logger.error("[$accountName] Interrupted during backoff delay for payment: $paymentId", e)
-                //     return@repeat
-                // }
-            // }
+                try {
+                    Thread.sleep(delayMs)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    logger.error("[$accountName] Interrupted during backoff delay for payment: $paymentId", e)
+                    return@repeat
+                }
+            }
             
-            // shouldRetry = false
+            shouldRetry = false
             attemptIndex++
 
             ongoingWindow.acquire()
             slidingWindow.tickBlocking()
 
-            // if (estimatedRemainingTime - now() < 0) {
-            //     throw RetryAfterException(quntileResponseTime)
-            // }
 
             metrics.retryCounter.increment()
 
             val sample = Timer.start(meterRegistry)
-            // val remainingTime = min(deadline - now().toLong(), quntileResponseTime)
-            // val callTimeout = remainingTime.coerceAtLeast(1L)
+            val remainingTime = (deadline - now()).toLong()
+            val callTimeout = remainingTime.coerceAtLeast(1L)
             try {
-
                 client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply { response ->
-                // client.newCall(request).await().use { response ->
-                val responseBodyString = response.body()
+                    val responseBodyString = response.body()
 
-                val body = try {
-                    mapper.readValue(responseBodyString, ExternalSysResponse::class.java)
-                } catch (e: Exception) {
-                    logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: $responseBodyString")
-                    ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message ?: "Parse failed")
+                    val body = try {
+                        mapper.readValue(responseBodyString, ExternalSysResponse::class.java)
+                    } catch (e: Exception) {
+                        logger.error("[$accountName] [ERROR] Payment processed for txId: $transactionId, payment: $paymentId, result code: ${response.statusCode()}, reason: $responseBodyString")
+                        ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message ?: "Parse failed")
+                    }
+
+                    logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
+
+                    paymentESService.update(paymentId) {
+                        it.logProcessing(body.result, now(), transactionId, reason = body.message)
+                    }
+
+                    metrics.retriesPerRequestSummary.record((attemptIndex).toDouble())
                 }
-
-                logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
-
-                paymentESService.update(paymentId) {
-                    it.logProcessing(body.result, now(), transactionId, reason = body.message)
-                }
-
-                metrics.retriesPerRequestSummary.record((attemptIndex).toDouble())
-            }
-                // }
-                // val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                // call.timeout().timeout(10_000, TimeUnit.MILLISECONDS)
-                // resp.use { response ->
-                        // return@trySendRequest
-                    // }
-                // }
-
-                // logger.warn("OUTSIDE CLIENT.CALl")
             } catch (e: CancellationException) {
                 logger.warn("cancelattion exception:()")
                 throw e
 
             } catch (e: Exception) {
                 when (e) {
-                    // is InterruptedIOException -> {
-                    //     shouldRetry = true
-                    // }
+                    is InterruptedIOException -> {
+                        shouldRetry = true
+                    }
                     is RetryAfterException -> {
                         throw e
                     }
@@ -251,7 +202,7 @@ class PaymentExternalSystemAdapterImpl(
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = e.message)
                         }
-                        // shouldRetry = true
+                        shouldRetry = true
                     }
                 }
             } finally {
