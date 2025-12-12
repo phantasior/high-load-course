@@ -86,7 +86,7 @@ class PaymentExternalSystemAdapterImpl(
         try {
             val request = HttpRequest.newBuilder()
                 .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
-                .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
+                .POST(HttpRequest.BodyPublishers.noBody())
                 .timeout(Duration.ofSeconds(20))
                 .build()
 
@@ -156,13 +156,12 @@ class PaymentExternalSystemAdapterImpl(
             ongoingWindow.acquire()
             slidingWindow.tickBlocking()
 
-
             metrics.retryCounter.increment()
 
             val sample = Timer.start(meterRegistry)
             try {
                 var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
-                val success = response.statusCode() in 200..299
+
                 val body = try {
                     mapper.readValue(response.body(), ExternalSysResponse::class.java)
                 } catch (e: Exception) {
@@ -170,9 +169,12 @@ class PaymentExternalSystemAdapterImpl(
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
 
+                logger.warn("Protocol used: ${response.version()}")
+
+
                 metrics.retriesPerRequestSummary.record((attemptIndex).toDouble())
 
-                if (success) {
+                if (response.statusCode() in 200..299) {
                     logger.warn("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}")
                     paymentESService.update(paymentId) {
                         it.logProcessing(body.result, now(), transactionId, reason = body.message)
