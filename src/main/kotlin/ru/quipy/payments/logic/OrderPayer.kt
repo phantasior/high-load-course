@@ -41,11 +41,6 @@ class OrderPayer {
 
     val executorScope = CoroutineScope(paymentExecutor.asCoroutineDispatcher())
 
-    fun canAcceptRequest(): Boolean {
-        return (paymentExecutor.activeCount < paymentExecutor.maximumPoolSize) || 
-            (paymentExecutor.queue.remainingCapacity() > 0)
-    }
-
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
