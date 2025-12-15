@@ -9,6 +9,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.common.utils.OngoingWindow
+import ru.quipy.common.utils.OngoingWindowAsync
 import java.io.InterruptedIOException
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -60,7 +61,7 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val slidingWindow = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
-    private val ongoingWindow = OngoingWindow(parallelRequests)
+    private val ongoingWindow = OngoingWindowAsync(parallelRequests)
 
     private val client = HttpClient.newBuilder()
         // .executor(Executors.newFixedThreadPool(100))
@@ -168,9 +169,6 @@ class PaymentExternalSystemAdapterImpl(
                     logger.error("[$accountName] [ERROR] txId=$transactionId payment=$paymentId code=${response.statusCode()} reason=${response.body()}")
                     ExternalSysResponse(transactionId.toString(), paymentId.toString(), false, e.message)
                 }
-
-                logger.warn("Protocol used: ${response.version()}")
-
 
                 metrics.retriesPerRequestSummary.record((attemptIndex).toDouble())
 
