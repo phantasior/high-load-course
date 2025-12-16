@@ -34,6 +34,8 @@ import kotlinx.coroutines.future.await
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 
 // Advice: always treat time as a Duration
@@ -64,11 +66,10 @@ class PaymentExternalSystemAdapterImpl(
     private val ongoingWindow = OngoingWindowAsync(parallelRequests)
 
     private val client = HttpClient.newBuilder()
-        // .executor(Executors.newFixedThreadPool(100))
+        .executor(Executors.newFixedThreadPool(100))
         .version(HttpClient.Version.HTTP_2)
         .build()
 
-    class RateLimitExceededException() : Exception("Rate limit exceeded")
     class RetryAfterException(val interval: Long) : Exception("Retry after $interval ms")
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
@@ -84,84 +85,40 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        try {
-            val request = HttpRequest.newBuilder()
+        val request = HttpRequest.newBuilder()
                 .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
                 .POST(HttpRequest.BodyPublishers.noBody())
-                .timeout(Duration.ofSeconds(20))
+                .timeout(Duration.ofSeconds(40))
                 .build()
 
+        slidingWindow.tickAsync()
+        ongoingWindow.acquire()
+        try {
             trySendRequest(request, paymentId, transactionId, deadline)
-        } catch (e: Exception) {
-            logger.error("SOME STRAGE STUFF WTF [$accountName] Payment timeout for txId: $transactionId, payment: $paymentId, class: ${e.javaClass}", e)
-            when (e) {
-
-                is TimeoutCancellationException -> {
-                    logger.warn("Calcellration expection!! return 429 :C")
-                    throw e
-                }
-
-                is HttpTimeoutException -> {
-                    logger.warn("HTTP TIMEOUT EXCEPTION")
-                    throw e   
-                }
-
-                is SocketTimeoutException -> {
-                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                    }
-                } else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    paymentESService.update(paymentId) {
-                        it.logProcessing(false, now(), transactionId, reason = e.message)
-                    }
-                }
-            }
+        } finally {
+            ongoingWindow.release()
         }
     }
 
     suspend private fun trySendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID, deadline: Long) {
-        var quntileResponseTime = 1030L
-        val estimatedRemainingTime = deadline - quntileResponseTime
-        
         var attemptIndex = 0
         val maxAttempts = 3
-        val baseDelayMs = 100L 
-        val maxDelayMs = 5000L
-
-        var shouldRetry = true
 
         repeat(maxAttempts) {
-            if (!shouldRetry) return@repeat
-            if (attemptIndex > 0) {
-                val delayMs = minOf(baseDelayMs * (1L shl (attemptIndex - 1)), maxDelayMs) // битовый сдвиг эквивалентен возведению в степень, типа экспоненциальный бэкофф
+            attemptIndex += 1
 
-                if (estimatedRemainingTime - now() < delayMs) {
-                    throw RetryAfterException(quntileResponseTime)
-                }
-
-                try {
-                    Thread.sleep(delayMs)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    logger.error("[$accountName] Interrupted during backoff delay for payment: $paymentId", e)
-                    return@repeat
-                }
+            if (attemptIndex > 1) {
+                logger.warn("WHY AM I HERE???")
             }
-            
-            shouldRetry = false
-            attemptIndex++
-
-            ongoingWindow.acquire()
-            slidingWindow.tickBlocking()
 
             metrics.retryCounter.increment()
 
             val sample = Timer.start(meterRegistry)
+
             try {
-                var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
+                var response = client
+                    .sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                    .await()
 
                 val body = try {
                     mapper.readValue(response.body(), ExternalSysResponse::class.java)
@@ -177,39 +134,50 @@ class PaymentExternalSystemAdapterImpl(
                     paymentESService.update(paymentId) {
                         it.logProcessing(body.result, now(), transactionId, reason = body.message)
                     }
-                    
+
                     return
                 }
-            } catch (e: CancellationException) {
-                logger.warn("cancelattion exception:()")
-                throw e
             } catch (e: Exception) {
                 when (e) {
-                    is InterruptedIOException -> {
-                        shouldRetry = true
-                    }
-                    is RetryAfterException -> {
-                        throw e
-                    }
-                    else -> {
+                    is CancellationException -> {
+                        logger.error("[$accountName] Cancellation expection for txId: $transactionId, payment: $paymentId", e)
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    } is TimeoutCancellationException -> {
+                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    } is HttpTimeoutException -> {
+                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    } is SocketTimeoutException -> {
+                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
+                        paymentESService.update(paymentId) {
+                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+                        }
+                    } else -> {
                         logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = e.message)
                         }
-                        shouldRetry = true
                     }
                 }
+
+                return
             } finally {
                 sample.stop(metrics.requestDurationTimer)
-                ongoingWindow.release()
-            }
+            } 
         }
-
+        
+        metrics.retriesPerRequestSummary.record(maxAttempts.toDouble())
         paymentESService.update(paymentId) {
             it.logProcessing(false, now(), transactionId, reason = "request failed")
         }
-        // Если все 5 попыток не увенчались успехом, записываем максимальное количество попыток
-        metrics.retriesPerRequestSummary.record(maxAttempts.toDouble())
+
     }
 
     override fun price() = properties.price

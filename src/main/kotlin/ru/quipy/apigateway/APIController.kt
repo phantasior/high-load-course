@@ -26,8 +26,6 @@ class APIController {
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    // private val accountRps: Int = 120
-
     private var rateLimiter = TokenBucketRateLimiter(
         rate = 1100,
         bucketMaxCapacity = 20000,
@@ -80,7 +78,7 @@ class APIController {
         } ?: throw IllegalArgumentException("No such order $orderId")
         
         if (!rateLimiter.tick()) {
-            logger.warn("Either rate limiter or order payer failed")
+            logger.warn("Too many /orders{orderId}/payment requests")
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", (System.currentTimeMillis() + retryAfterDuration).toString())
@@ -100,7 +98,7 @@ class APIController {
                     .build()
             }
         
-            logger.warn("Abort policy - thread pull is full")
+            logger.warn("Process payment failure")
             return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", (System.currentTimeMillis() + retryAfterDuration).toString())
