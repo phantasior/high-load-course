@@ -139,22 +139,12 @@ class PaymentExternalSystemAdapterImpl(
                 }
             } catch (e: Exception) {
                 when (e) {
-                    is CancellationException -> {
-                        logger.error("[$accountName] Cancellation expection for txId: $transactionId, payment: $paymentId", e)
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                        }
-                    } is TimeoutCancellationException -> {
+                    is TimeoutCancellationException -> {
                         logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                         }
                     } is HttpTimeoutException -> {
-                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                        }
-                    } is SocketTimeoutException -> {
                         logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
@@ -166,8 +156,6 @@ class PaymentExternalSystemAdapterImpl(
                         }
                     }
                 }
-
-                return
             } finally {
                 sample.stop(metrics.requestDurationTimer)
             } 
