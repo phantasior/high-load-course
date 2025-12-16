@@ -66,7 +66,7 @@ class PaymentExternalSystemAdapterImpl(
     private val ongoingWindow = OngoingWindowAsync(parallelRequests)
 
     private val client = HttpClient.newBuilder()
-        .executor(Executors.newFixedThreadPool(100))
+        .executor(Executors.newFixedThreadPool(25))
         .version(HttpClient.Version.HTTP_2)
         .build()
 
@@ -106,10 +106,6 @@ class PaymentExternalSystemAdapterImpl(
 
         repeat(maxAttempts) {
             attemptIndex += 1
-
-            if (attemptIndex > 1) {
-                logger.warn("WHY AM I HERE???")
-            }
 
             metrics.retryCounter.increment()
 
