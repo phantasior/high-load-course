@@ -93,7 +93,6 @@ class PaymentExternalSystemAdapterImpl(
                 .timeout(Duration.ofSeconds(40))
                 .build()
 
-        slidingWindow.tickAsync()
         ongoingWindow.acquire()
         try {
             trySendRequest(request, paymentId, transactionId, deadline)
@@ -107,11 +106,13 @@ class PaymentExternalSystemAdapterImpl(
         val maxAttempts = 3
 
         repeat(maxAttempts) {
+            slidingWindow.tickAsync()
             attemptIndex += 1
 
             metrics.retryCounter.increment()
 
             val sample = Timer.start(meterRegistry)
+
 
             try {
                 var response = client
