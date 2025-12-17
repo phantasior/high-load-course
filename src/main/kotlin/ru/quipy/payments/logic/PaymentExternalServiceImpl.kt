@@ -85,9 +85,11 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
+        // Sending a POST with a non-empty body over h2c (HTTP/2 cleartext) can fall back to HTTP/1.1 if the server or client doesn’t properly support request body framing in h2c mode.
         val request = HttpRequest.newBuilder()
                 .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
                 .POST(HttpRequest.BodyPublishers.noBody())
+                //  .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
                 .timeout(Duration.ofSeconds(40))
                 .build()
 
@@ -134,18 +136,15 @@ class PaymentExternalSystemAdapterImpl(
                     return
                 }
             } catch (e: Exception) {
-                when (e) {
-                    is TimeoutCancellationException -> {
+                when {
+                    e is TimeoutCancellationException || e is HttpTimeoutException -> {
                         logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                         }
-                    } is HttpTimeoutException -> {
-                        logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                        }
-                    } else -> {
+                    } 
+                    
+                    else -> {
                         logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = e.message)
