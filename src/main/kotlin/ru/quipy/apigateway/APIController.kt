@@ -27,7 +27,7 @@ class APIController {
     private lateinit var orderPayer: OrderPayer
 
     private var rateLimiter = TokenBucketRateLimiter(
-        rate = 1100,
+        rate = 4100,
         bucketMaxCapacity = 20000,
         window = 1,     
         timeUnit = TimeUnit.SECONDS

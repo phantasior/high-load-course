@@ -90,7 +90,7 @@ class PaymentExternalSystemAdapterImpl(
                 .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
                 .POST(HttpRequest.BodyPublishers.noBody())
                 //  .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
-                .timeout(Duration.ofSeconds(40))
+                .timeout(Duration.ofSeconds(2))
                 .build()
 
         ongoingWindow.acquire()
