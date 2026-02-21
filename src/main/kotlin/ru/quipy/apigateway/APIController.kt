@@ -11,7 +11,6 @@ import java.util.*
 import java.util.concurrent.TimeUnit
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
-import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl.RetryAfterException
 
 @RestController
 class APIController {

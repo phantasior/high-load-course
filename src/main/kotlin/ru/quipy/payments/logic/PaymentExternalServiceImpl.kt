@@ -50,7 +50,7 @@ class PaymentExternalSystemAdapterImpl(
     companion object {
         val logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
 
-        val emptyBody = RequestBody.create(null, ByteArray(0))
+        val emptyBody = HttpRequest.BodyPublishers.noBody()
         val mapper = ObjectMapper().registerKotlinModule()
     }
 
@@ -72,6 +72,15 @@ class PaymentExternalSystemAdapterImpl(
 
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        if (deadline - now() < minDeadlineDelta) {
+            val current = now()
+            logger.warn("[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline, $current")
+            paymentESService.update(paymentId) {
+                it.logProcessing(false, now(), null, reason = "Deadline exceeded")
+            }
+            return
+        }
+
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
@@ -84,12 +93,10 @@ class PaymentExternalSystemAdapterImpl(
 
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        // Sending a POST with a non-empty body over h2c (HTTP/2 cleartext) can fall back to HTTP/1.1 if the server or client doesn’t properly support request body framing in h2c mode.
         val request = HttpRequest.newBuilder()
                 .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
-                .POST(HttpRequest.BodyPublishers.noBody())
-                //  .POST(HttpRequest.BodyPublishers.ofString(emptyBody.toString()))
-                .timeout(Duration.ofSeconds(2))
+                .POST(emptyBody)
+                .timeout(Duration.ofSeconds(deadline - now()))
                 .build()
 
         ongoingWindow.acquire()
@@ -113,7 +120,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
                 return
             }
-            
+
             slidingWindow.tickAsync()
             attemptIndex += 1
 
