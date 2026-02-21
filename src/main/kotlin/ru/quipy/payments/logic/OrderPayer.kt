@@ -7,9 +7,11 @@ import org.springframework.stereotype.Service
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.util.*
+import java.util.concurrent.Executors
+import java.util.concurrent.ThreadPoolExecutor
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 
 @Service
@@ -25,12 +27,14 @@ class OrderPayer {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val paymentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val paymentDispatcher = Executors.newFixedThreadPool(200)
+        .also { executor -> (executor as? ThreadPoolExecutor)?.prestartAllCoreThreads()}.asCoroutineDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + paymentDispatcher)
 
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
-        paymentScope.launch {
+        scope.launch {
             val createdEvent = paymentESService.create {
                 it.create(
                     paymentId,

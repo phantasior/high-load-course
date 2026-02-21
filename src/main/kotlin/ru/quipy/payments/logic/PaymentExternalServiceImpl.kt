@@ -66,12 +66,28 @@ class PaymentExternalSystemAdapterImpl(
     private val ongoingWindow = OngoingWindowAsync(parallelRequests)
     private val minDeadlineDelta = 10
 
+    private val executor = Executors.newFixedThreadPool(100)
+
     private val client = HttpClient.newBuilder()
+        .executor(executor)
         .version(HttpClient.Version.HTTP_2)
+        .connectTimeout(Duration.ofSeconds(5))
         .build()
 
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
+        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+        
+        val transactionId = UUID.randomUUID()
+        
+        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
+        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
+        paymentESService.update(paymentId) {
+            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+        }
+        
+        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
+        
         if (deadline - now() < minDeadlineDelta) {
             val current = now()
             logger.warn("[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline, $current")
@@ -80,31 +96,16 @@ class PaymentExternalSystemAdapterImpl(
             }
             return
         }
-
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
-
-        val transactionId = UUID.randomUUID()
-
-        // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-        // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-        paymentESService.update(paymentId) {
-            it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-        }
-
-        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
-
+        
         val request = HttpRequest.newBuilder()
                 .uri(URI.create("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount"))
                 .POST(emptyBody)
                 .timeout(Duration.ofSeconds(deadline - now()))
                 .build()
 
-        ongoingWindow.acquire()
-        try {
-            trySendRequest(request, paymentId, transactionId, deadline)
-        } finally {
-            ongoingWindow.release()
-        }
+        // ongoingWindow.withSlot { 
+            trySendRequest(request, paymentId, transactionId, deadline)  
+        //  }
     }
 
     suspend private fun trySendRequest(request: HttpRequest, paymentId: UUID, transactionId: UUID, deadline: Long) {
