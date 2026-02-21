@@ -32,7 +32,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana:10.4.3
     user: root
     volumes:
       - ./grafana/data:/var/lib/grafana

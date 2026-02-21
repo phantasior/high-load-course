@@ -64,13 +64,12 @@ class PaymentExternalSystemAdapterImpl(
 
     private val slidingWindow = SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val ongoingWindow = OngoingWindowAsync(parallelRequests)
+    private val minDeadlineDelta = 10
 
     private val client = HttpClient.newBuilder()
-        .executor(Executors.newFixedThreadPool(25))
         .version(HttpClient.Version.HTTP_2)
         .build()
 
-    class RetryAfterException(val interval: Long) : Exception("Retry after $interval ms")
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
@@ -106,6 +105,15 @@ class PaymentExternalSystemAdapterImpl(
         val maxAttempts = 3
 
         repeat(maxAttempts) {
+            if (deadline - now() < minDeadlineDelta) {
+                val current = now()
+                logger.warn("[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline, $current")
+                paymentESService.update(paymentId) {
+                    it.logProcessing(false, now(), null, reason = "Deadline exceeded")
+                }
+                return
+            }
+            
             slidingWindow.tickAsync()
             attemptIndex += 1
 

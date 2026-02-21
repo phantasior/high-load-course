@@ -27,8 +27,8 @@ class APIController {
     private lateinit var orderPayer: OrderPayer
 
     private var rateLimiter = TokenBucketRateLimiter(
-        rate = 4100,
-        bucketMaxCapacity = 20000,
+        rate = 5000,
+        bucketMaxCapacity = 10000,
         window = 1,     
         timeUnit = TimeUnit.SECONDS
     )
@@ -86,24 +86,8 @@ class APIController {
         }
 
 
-        try {
-            val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-            return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
-        } catch (e: Exception) {
-            if (e is RetryAfterException) {
-            logger.warn("Retry after $e.interval ms payment request for order $orderId")
-                return ResponseEntity
-                    .status(HttpStatus.TOO_MANY_REQUESTS)
-                    .header("Retry-After", (System.currentTimeMillis() + e.interval).toString())
-                    .build()
-            }
-        
-            logger.warn("Process payment failure")
-            return ResponseEntity
-                .status(HttpStatus.TOO_MANY_REQUESTS)
-                .header("Retry-After", (System.currentTimeMillis() + retryAfterDuration).toString())
-                .build()
-        }
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
     }
 
     class PaymentSubmissionDto(
