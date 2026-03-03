@@ -27,6 +27,15 @@ class OngoingWindowAsync(
     }
 
     fun release() = window.release()
+
+    suspend inline fun <T> withSlot(block: () -> T): T {
+        acquire()
+        return try {
+            block()
+        } finally {
+            release()
+        }
+    }
 }
 
 class NonBlockingOngoingWindow(
