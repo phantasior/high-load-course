@@ -10,43 +10,47 @@ Content-Type: application/json
   "processingTimeMillis": 2500
 }
 
-curl http://localhost:1234/test/run \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d '{
-        "serviceName": "darkside",
-        "token": "..",
-        "ratePerSecond": 100,
-        "testCount": 5000,
-        "processingTimeMillis": 20000
-    }'
+mvn dependency:go-offline
+mvn package && java -jar target/demo-0.0.1-SNAPSHOT.jar
 
-Аккаунт: "acc-9"
+=== 
+hw-10
 
-  {
-    "serviceName": "darkside",
-    "accountName": "acc-9",
-    "parallelRequests": 50,
-    "rateLimitPerSec": 120,
-    "price": 30,
-    "averageProcessingTime": "PT0.5S"
-  },
-
-Тест:
+Account info
 {
-  "ratePerSecond": 100,
-  "testCount": 5000,
-  "processingTimeMillis": 20000
+  "serviceName": "darkside",
+  "accountName": "acc-13",
+  "parallelRequests": 2000,
+  "rateLimitPerSec": 5000,
+  "price": 30,
+  "averageProcessingTime": "PT0.01S"
 }
 
-mvn dependency:go-offline && mvn package && java -jar target/demo-0.0.1-SNAPSHOT.jar
+Test:
+{  
+  "ratePerSecond": 4000,
+  "testCount": 1500000,
+  "processingTimeMillis": 1000
+}
 
-
+Envs:
 export PAYMENT_SERVICE_NAME=darkside
 export PAYMENT_TOKEN=...
-export PAYMENT_ACCOUNTS=acc-9
+export PAYMENT_ACCOUNTS=acc-13
 export PAYMENT_HOST=localhost
 export PAYMENT_PORT=1234
+
+
+curl http://localhost:1234/test/run \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+      "serviceName": "darkside",
+      "token": "...",
+      "ratePerSecond": 4000,
+      "testCount": 1500000,
+      "processingTimeMillis": 1000
+  }'
 
 
 
