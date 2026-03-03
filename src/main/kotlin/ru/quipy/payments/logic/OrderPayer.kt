@@ -1,18 +1,16 @@
 package ru.quipy.payments.logic
 
+import java.util.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
-import java.util.*
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadPoolExecutor
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.launch
 
 @Service
 class OrderPayer {
@@ -22,28 +20,19 @@ class OrderPayer {
     }
 
     @Autowired
-    private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
+    private lateinit var paymentESService:
+            EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
-    @Autowired
-    private lateinit var paymentService: PaymentService
+    @Autowired private lateinit var paymentService: PaymentService
 
-    private val paymentDispatcher = Executors.newFixedThreadPool(200)
-        .also { executor -> (executor as? ThreadPoolExecutor)?.prestartAllCoreThreads()}.asCoroutineDispatcher()
-    private val scope = CoroutineScope(SupervisorJob() + paymentDispatcher)
+    // private val paymentDispatcher = Executors.newFixedThreadPool(100).asCoroutineDispatcher()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
         val createdAt = System.currentTimeMillis()
 
         scope.launch {
-            val createdEvent = paymentESService.create {
-                it.create(
-                    paymentId,
-                    orderId,
-                    amount
-                )
-            }
-            logger.trace("Payment ${createdEvent.paymentId} for order $orderId created.")
-
+            logger.info("Payment ${paymentId} for order $orderId created.")
             paymentService.submitPaymentRequest(paymentId, amount, createdAt, deadline)
         }
 
