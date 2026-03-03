@@ -15,87 +15,85 @@ import ru.quipy.payments.logic.OrderPayer
 @RestController
 class APIController {
 
-        val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
+    val logger: Logger = LoggerFactory.getLogger(APIController::class.java)
 
-        val retryAfterDuration: Int = 1_000
+    val retryAfterDuration: Int = 1_000
 
-        @Autowired private lateinit var orderRepository: OrderRepository
+    @Autowired private lateinit var orderRepository: OrderRepository
 
-        @Autowired private lateinit var orderPayer: OrderPayer
+    @Autowired private lateinit var orderPayer: OrderPayer
 
-        private var rateLimiter =
-                TokenBucketRateLimiter(
-                        rate = 1100,
-                        bucketMaxCapacity = 1100,
-                        window = 1,
-                        timeUnit = TimeUnit.SECONDS
+    private var rateLimiter =
+            TokenBucketRateLimiter(
+                    rate = 1100,
+                    bucketMaxCapacity = 1100,
+                    window = 1,
+                    timeUnit = TimeUnit.SECONDS
+            )
+
+    @PostMapping("/users")
+    fun createUser(@RequestBody req: CreateUserRequest): User {
+        return User(UUID.randomUUID(), req.name)
+    }
+
+    data class CreateUserRequest(val name: String, val password: String)
+
+    data class User(val id: UUID, val name: String)
+
+    @PostMapping("/orders")
+    fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+        val order =
+                Order(
+                        UUID.randomUUID(),
+                        userId,
+                        System.currentTimeMillis(),
+                        OrderStatus.COLLECTING,
+                        price,
                 )
+        return orderRepository.save(order)
+    }
 
-        @PostMapping("/users")
-        fun createUser(@RequestBody req: CreateUserRequest): User {
-                return User(UUID.randomUUID(), req.name)
-        }
+    data class Order(
+            val id: UUID,
+            val userId: UUID,
+            val timeCreated: Long,
+            val status: OrderStatus,
+            val price: Int,
+    )
 
-        data class CreateUserRequest(val name: String, val password: String)
+    enum class OrderStatus {
+        COLLECTING,
+        PAYMENT_IN_PROGRESS,
+        PAID,
+    }
 
-        data class User(val id: UUID, val name: String)
+    @PostMapping("/orders/{orderId}/payment")
+    suspend fun payOrder(
+            @PathVariable orderId: UUID,
+            @RequestParam deadline: Long
+    ): ResponseEntity<PaymentSubmissionDto> {
 
-        @PostMapping("/orders")
-        fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
-                val order =
-                        Order(
-                                UUID.randomUUID(),
-                                userId,
-                                System.currentTimeMillis(),
-                                OrderStatus.COLLECTING,
-                                price,
-                        )
-                return orderRepository.save(order)
-        }
-
-        data class Order(
-                val id: UUID,
-                val userId: UUID,
-                val timeCreated: Long,
-                val status: OrderStatus,
-                val price: Int,
-        )
-
-        enum class OrderStatus {
-                COLLECTING,
-                PAYMENT_IN_PROGRESS,
-                PAID,
-        }
-
-        @PostMapping("/orders/{orderId}/payment")
-        suspend fun payOrder(
-                @PathVariable orderId: UUID,
-                @RequestParam deadline: Long
-        ): ResponseEntity<PaymentSubmissionDto> {
-
-                val paymentId = UUID.randomUUID()
-                val order =
-                        orderRepository.findById(orderId)?.let {
-                                orderRepository.save(
-                                        it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS)
-                                )
-                                it
-                        }
-                                ?: throw IllegalArgumentException("No such order $orderId")
-
-                if (!rateLimiter.tick()) {
-                        logger.warn("Too many /orders{orderId}/payment requests")
-                        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                                .header(
-                                        "Retry-After",
-                                        (System.currentTimeMillis() + retryAfterDuration).toString()
-                                )
-                                .build()
+        val paymentId = UUID.randomUUID()
+        val order =
+                orderRepository.findById(orderId)?.let {
+                    orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS))
+                    it
                 }
+                        ?: throw IllegalArgumentException("No such order $orderId")
 
-                val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
-                return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+        if (!rateLimiter.tick()) {
+            logger.warn("Too many /orders{orderId}/payment requests")
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header(
+                            "Retry-After",
+                            (System.currentTimeMillis() + retryAfterDuration).toString()
+                    )
+                    .build()
         }
 
-        class PaymentSubmissionDto(val timestamp: Long, val transactionId: UUID)
+        val createdAt = orderPayer.processPayment(orderId, order.price, paymentId, deadline)
+        return ResponseEntity.ok(PaymentSubmissionDto(createdAt, paymentId))
+    }
+
+    class PaymentSubmissionDto(val timestamp: Long, val transactionId: UUID)
 }
