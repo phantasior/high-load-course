@@ -13,7 +13,7 @@ import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
 import java.time.Duration
 import java.util.*
-import java.util.concurrent.Executors
+import java.util.concurrent.CompletionException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.future.await
@@ -53,25 +53,39 @@ class PaymentExternalSystemAdapterImpl(
             SlidingWindowRateLimiter(rateLimitPerSec.toLong(), Duration.ofSeconds(1))
     private val ongoingWindow = OngoingWindowAsync(parallelRequests)
     private val minDeadlineDelta = 10
-    private val executor = Executors.newFixedThreadPool(100)
 
     private val client =
             HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_2)
-                    .connectTimeout(Duration.ofMillis(1500))
+                    // .connectTimeout(Duration.ofMillis(1500))
                     .build()
 
     var circuitBreaker =
             CircuitBreaker.of(
                     "paymentExternalService",
                     CircuitBreakerConfig.custom()
-                            .failureRateThreshold(8F)
-                            .slowCallRateThreshold(8F)
-                            .waitDurationInOpenState(Duration.ofSeconds(10))
-                            .slowCallDurationThreshold(Duration.ofSeconds(1))
+                            .failureRateThreshold(50F) // 50% failure - open
+                            .slowCallRateThreshold(
+                                    8F
+                            ) // 8 calls slower than slowCallDurationThreshold - open
+                            .slowCallDurationThreshold(Duration.ofSeconds(1)) // for above
+                            .waitDurationInOpenState(Duration.ofSeconds(10)) // how long we open
                             .permittedNumberOfCallsInHalfOpenState(40)
+                            .slidingWindowSize(100)
+                            .recordExceptions(
+                                    TimeoutCancellationException::class.java,
+                                    HttpTimeoutException::class.java
+                            )
                             .build()
             )
+
+//     init {
+//         circuitBreaker
+//                 .eventPublisher
+//                 .onStateTransition { println("CB STATE: ${it.stateTransition}") }
+//                 .onError { println("CB ERROR: ${it.throwable}") }
+//                 .onSuccess { println("CB SUCCESS") }
+//     }
 
     override suspend fun performPaymentAsync(
             paymentId: UUID,
@@ -82,13 +96,14 @@ class PaymentExternalSystemAdapterImpl(
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        val current = now()
-        if (deadline - current < minDeadlineDelta) {
-            logger.warn(
-                    "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline, $current"
-            )
-            return
-        }
+        // val current = now()
+        // if (deadline - current < minDeadlineDelta) {
+        //     logger.warn(
+        //             "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline,
+        // $current"
+        //     )
+        //     return
+        // }
 
         val request =
                 HttpRequest.newBuilder()
@@ -98,41 +113,54 @@ class PaymentExternalSystemAdapterImpl(
                                 )
                         )
                         .POST(emptyBody)
-                        .timeout(Duration.ofSeconds(2))
+                        .timeout(Duration.ofMillis(500))
                         .build()
 
-        ongoingWindow.withSlot {
-            while (!circuitBreaker.tryAcquirePermission()) {
+        // ongoingWindow.withSlot {
+        val protectedCall =
+                circuitBreaker.decorateSuspendFunction {
+                    trySendRequest(request, paymentId, transactionId, deadline, circuitBreaker)
+                }
+
+        // ✅ wait-until-closed behavior
+        while (true) {
+            try {
+                return protectedCall()
+            } catch (e: CallNotPermittedException) {
+                println("Circuit OPEN → waiting...")
                 delay(100)
             }
-            circuitBreaker
-                    .decorateSuspendFunction {
-                        trySendRequest(request, paymentId, transactionId, deadline)
-                    }
-                    .invoke()
         }
+        // }
     }
 
     suspend private fun trySendRequest(
             request: HttpRequest,
             paymentId: UUID,
             transactionId: UUID,
-            deadline: Long
+            deadline: Long,
+            circuitBreaker: CircuitBreaker,
     ) {
         val currentTime = now()
-        if (deadline - currentTime < minDeadlineDelta) {
-            logger.warn(
-                    "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline, $currentTime"
-            )
-            throw HttpTimeoutException("timeout")
-        }
+        // if (deadline - currentTime < minDeadlineDelta) {
+        //     logger.warn(
+        //             "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline,
+        // $currentTime"
+        //     )
+        //     throw HttpTimeoutException("timeout")
+        // }
 
-        slidingWindow.tickAsync()
+        // slidingWindow.tickAsync()
         metrics.retryCounter.increment()
         val sample = Timer.start(meterRegistry)
 
         try {
             sendRequest(request, paymentId, transactionId)
+            // if (sendRequest(request, paymentId, transactionId)) {
+            // circuitBreaker.onSuccess(300, TimeUnit.MILLISECONDS)
+            // } else {
+            // circuitBreaker.onError(300, TimeUnit.MILLISECONDS, Exception())
+            // }
         } catch (e: Exception) {
             when {
                 e is TimeoutCancellationException || e is HttpTimeoutException -> {
@@ -149,6 +177,7 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
 
+            // circuitBreaker.onError(300, TimeUnit.MILLISECONDS, Exception())
             throw e
         } finally {
             sample.stop(metrics.requestDurationTimer)
@@ -184,7 +213,9 @@ class PaymentExternalSystemAdapterImpl(
             return true
         }
 
-        return false
+        throw RuntimeException(
+                "[$accountName] Payment provider returned non-success code ${response.statusCode()} for txId=$transactionId paymentId=$paymentId"
+        )
     }
 
     override fun price() = properties.price
