@@ -2,6 +2,8 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.circuitbreaker.*
+import io.github.resilience4j.kotlin.circuitbreaker.decorateSuspendFunction
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import java.net.URI
@@ -15,8 +17,6 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.*
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.future.await
-import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.withTimeout
 import okhttp3.*
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.OngoingWindowAsync
@@ -61,6 +61,18 @@ class PaymentExternalSystemAdapterImpl(
                     .connectTimeout(Duration.ofMillis(1500))
                     .build()
 
+    var circuitBreaker =
+            CircuitBreaker.of(
+                    "paymentExternalService",
+                    CircuitBreakerConfig.custom()
+                            .failureRateThreshold(8F)
+                            .slowCallRateThreshold(8F)
+                            .waitDurationInOpenState(Duration.ofSeconds(10))
+                            .slowCallDurationThreshold(Duration.ofSeconds(1))
+                            .permittedNumberOfCallsInHalfOpenState(40)
+                            .build()
+            )
+
     override suspend fun performPaymentAsync(
             paymentId: UUID,
             amount: Int,
@@ -86,25 +98,18 @@ class PaymentExternalSystemAdapterImpl(
                                 )
                         )
                         .POST(emptyBody)
-                        .timeout(Duration.ofSeconds(deadline - current))
+                        .timeout(Duration.ofSeconds(2))
                         .build()
 
         ongoingWindow.withSlot {
-            withTimeout(1500) {
-                select<Result<String>> {
-                    async { trySendRequest(request, paymentId, transactionId, deadline) }
-
-                    async {
-                        delay(50)
-                        trySendRequest(request, paymentId, transactionId, deadline)
-                    }
-
-                    async {
-                        delay(50)
-                        trySendRequest(request, paymentId, transactionId, deadline)
-                    }
-                }
+            while (!circuitBreaker.tryAcquirePermission()) {
+                delay(100)
             }
+            circuitBreaker
+                    .decorateSuspendFunction {
+                        trySendRequest(request, paymentId, transactionId, deadline)
+                    }
+                    .invoke()
         }
     }
 
@@ -113,13 +118,13 @@ class PaymentExternalSystemAdapterImpl(
             paymentId: UUID,
             transactionId: UUID,
             deadline: Long
-    ): Boolean {
+    ) {
         val currentTime = now()
         if (deadline - currentTime < minDeadlineDelta) {
             logger.warn(
                     "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline, $currentTime"
             )
-            return false
+            throw HttpTimeoutException("timeout")
         }
 
         slidingWindow.tickAsync()
@@ -143,11 +148,11 @@ class PaymentExternalSystemAdapterImpl(
                     )
                 }
             }
+
+            throw e
         } finally {
             sample.stop(metrics.requestDurationTimer)
         }
-
-        return false
     }
 
     suspend private fun sendRequest(

@@ -25,7 +25,6 @@ class OrderPayer {
 
     @Autowired private lateinit var paymentService: PaymentService
 
-    // private val paymentDispatcher = Executors.newFixedThreadPool(100).asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun processPayment(orderId: UUID, amount: Int, paymentId: UUID, deadline: Long): Long {
