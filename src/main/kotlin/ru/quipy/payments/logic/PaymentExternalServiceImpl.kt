@@ -70,22 +70,23 @@ class PaymentExternalSystemAdapterImpl(
                             ) // 8 calls slower than slowCallDurationThreshold - open
                             .slowCallDurationThreshold(Duration.ofSeconds(1)) // for above
                             .waitDurationInOpenState(Duration.ofSeconds(10)) // how long we open
-                            .permittedNumberOfCallsInHalfOpenState(40)
+                            .permittedNumberOfCallsInHalfOpenState(10)
                             .slidingWindowSize(100)
                             .recordExceptions(
                                     TimeoutCancellationException::class.java,
                                     HttpTimeoutException::class.java
                             )
+                            .permittedNumberOfCallsInHalfOpenState(40)
                             .build()
             )
 
-//     init {
-//         circuitBreaker
-//                 .eventPublisher
-//                 .onStateTransition { println("CB STATE: ${it.stateTransition}") }
-//                 .onError { println("CB ERROR: ${it.throwable}") }
-//                 .onSuccess { println("CB SUCCESS") }
-//     }
+    init {
+        circuitBreaker
+                .eventPublisher
+                .onStateTransition { println("CB STATE: ${it.stateTransition}") }
+                .onError { println("CB ERROR: ${it.throwable}") }
+                .onSuccess { println("CB SUCCESS") }
+    }
 
     override suspend fun performPaymentAsync(
             paymentId: UUID,
@@ -96,14 +97,14 @@ class PaymentExternalSystemAdapterImpl(
         val transactionId = UUID.randomUUID()
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
-        // val current = now()
-        // if (deadline - current < minDeadlineDelta) {
-        //     logger.warn(
-        //             "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline,
-        // $current"
-        //     )
-        //     return
-        // }
+        val current = now()
+        if (deadline - current < minDeadlineDelta) {
+            logger.warn(
+                    "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline,
+        $current"
+            )
+            return
+        }
 
         val request =
                 HttpRequest.newBuilder()
@@ -116,22 +117,21 @@ class PaymentExternalSystemAdapterImpl(
                         .timeout(Duration.ofMillis(500))
                         .build()
 
-        // ongoingWindow.withSlot {
         val protectedCall =
                 circuitBreaker.decorateSuspendFunction {
                     trySendRequest(request, paymentId, transactionId, deadline, circuitBreaker)
                 }
 
-        // ✅ wait-until-closed behavior
         while (true) {
-            try {
-                return protectedCall()
-            } catch (e: CallNotPermittedException) {
-                println("Circuit OPEN → waiting...")
-                delay(100)
+            slidingWindow.tickAsync()
+            ongoingWindow.withSlot {
+                try {
+                    return protectedCall()
+                } catch (e: CallNotPermittedException) {
+                    delay(500)
+                }
             }
         }
-        // }
     }
 
     suspend private fun trySendRequest(
@@ -142,25 +142,19 @@ class PaymentExternalSystemAdapterImpl(
             circuitBreaker: CircuitBreaker,
     ) {
         val currentTime = now()
-        // if (deadline - currentTime < minDeadlineDelta) {
-        //     logger.warn(
-        //             "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline,
-        // $currentTime"
-        //     )
-        //     throw HttpTimeoutException("timeout")
-        // }
+        if (deadline - currentTime < minDeadlineDelta) {
+            logger.warn(
+                    "[$accountName] Skipping payment $paymentId: deadline exceeded, $deadline,
+        $currentTime"
+            )
+            throw HttpTimeoutException("timeout")
+        }
 
-        // slidingWindow.tickAsync()
         metrics.retryCounter.increment()
         val sample = Timer.start(meterRegistry)
 
         try {
             sendRequest(request, paymentId, transactionId)
-            // if (sendRequest(request, paymentId, transactionId)) {
-            // circuitBreaker.onSuccess(300, TimeUnit.MILLISECONDS)
-            // } else {
-            // circuitBreaker.onError(300, TimeUnit.MILLISECONDS, Exception())
-            // }
         } catch (e: Exception) {
             when {
                 e is TimeoutCancellationException || e is HttpTimeoutException -> {
@@ -177,7 +171,6 @@ class PaymentExternalSystemAdapterImpl(
                 }
             }
 
-            // circuitBreaker.onError(300, TimeUnit.MILLISECONDS, Exception())
             throw e
         } finally {
             sample.stop(metrics.requestDurationTimer)
@@ -188,7 +181,7 @@ class PaymentExternalSystemAdapterImpl(
             request: HttpRequest,
             paymentId: UUID,
             transactionId: UUID
-    ): Boolean {
+    ) {
         var response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
         val body =
                 try {
@@ -203,6 +196,8 @@ class PaymentExternalSystemAdapterImpl(
                             false,
                             e.message
                     )
+
+                    throw e
                 }
 
         if (response.statusCode() in 200..299) {
@@ -210,7 +205,7 @@ class PaymentExternalSystemAdapterImpl(
                     "[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, succeeded: ${body.result}, message: ${body.message}"
             )
 
-            return true
+            return
         }
 
         throw RuntimeException(
